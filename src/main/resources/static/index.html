@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>图片压缩工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 动态彩色进度条 */
+        @keyframes gradient-move {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        .progress-gradient {
+            background: linear-gradient(270deg, #3b82f6, #8b5cf6, #ec4899);
+            background-size: 600% 600%;
+            animation: gradient-move 4s ease infinite;
+        }
+
+        /* 呼吸渐变动画 */
+        @keyframes breathe-gradient {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        .gradient-breath {
+            background: linear-gradient(270deg, #34d399, #3b82f6, #8b5cf6, #f472b6);
+            background-size: 600% 600%;
+            animation: breathe-gradient 3s ease infinite;
+            color: white;
+        }
+
+        /* 鼠标手型 */
+        input[type="file"] {
+            cursor: pointer;
+        }
+
+        #downloadBtn.cursor-pointer {
+            cursor: pointer;
+        }
+
+        #downloadBtn.cursor-not-allowed {
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center min-h-screen p-6
+             bg-gradient-to-br from-blue-100 via-purple-100 to-pink-100">
+
+<h1 class="text-3xl font-bold mb-10 text-gray-800">图片压缩工具</h1>
+
+<!-- 上传卡片 -->
+<div class="bg-white shadow-2xl rounded-3xl p-8 w-full max-w-md flex flex-col items-center
+            backdrop-blur-md bg-opacity-90">
+    <p class="mb-6 text-gray-600 text-center">选择文件夹上传，压缩后可打包下载</p>
+
+    <!-- 文件选择 -->
+    <input type="file" id="fileInput" name="files" webkitdirectory directory multiple
+           class="block w-full text-sm text-gray-500 mb-6 rounded-lg border border-gray-300 p-3 cursor-pointer
+                  file:mr-4 file:py-2 file:px-4
+                  file:rounded-full file:border-0
+                  file:text-sm file:font-semibold
+                  file:bg-blue-600 file:text-white
+                  hover:file:bg-blue-700"/>
+
+    <!-- 压缩质量 -->
+    <div class="w-full mb-6">
+        <label for="quality" class="block mb-2 font-medium text-gray-700">压缩质量 (0.0 - 1.0)</label>
+        <input type="number" id="quality" name="quality" value="0.8" min="0" max="1" step="0.05"
+               class="w-full border border-gray-300 rounded-lg p-3 text-center focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+    </div>
+
+    <!-- 上传按钮 -->
+    <button id="uploadBtn"
+            class="w-full px-4 py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors duration-200">
+        上传并压缩
+    </button>
+
+    <!-- 上传信息 & 进度 -->
+    <div id="uploadInfo" class="mt-6 w-full hidden flex-col items-center">
+        <p id="fileCount" class="text-gray-700 mb-2 text-sm"></p>
+        <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+            <div id="progressBar" class="h-3 w-0 rounded-full transition-all duration-300 progress-gradient"></div>
+        </div>
+        <p id="progressText" class="text-gray-600 mt-2 text-sm"></p>
+    </div>
+</div>
+
+<!-- 下载区 -->
+<div class="mt-10 flex flex-col items-center space-y-3">
+    <a id="downloadBtn" href="/api/image/download/zip"
+       class="px-6 py-3 font-semibold rounded-xl cursor-not-allowed transition-colors duration-300
+              bg-gradient-to-r from-blue-300 via-purple-300 to-pink-300 text-white"
+       style="pointer-events: none;">
+        下载压缩包
+    </a>
+    <p class="text-gray-500 text-sm">压缩完成后可下载全部文件</p>
+</div>
+
+<!-- 页面内通知 -->
+<div id="toast" class="fixed top-6 right-6 bg-gray-800 text-white px-4 py-3 rounded-lg shadow-lg opacity-0 transition-opacity duration-300 z-50"></div>
+
+<script>
+    const uploadBtn = document.getElementById("uploadBtn");
+    const downloadBtn = document.getElementById("downloadBtn");
+    const toast = document.getElementById("toast");
+
+    let isUploading = false;
+
+    function showToast(message, type = 'info', duration = 3000) {
+        toast.textContent = message;
+        toast.className = `fixed top-6 right-6 px-4 py-3 rounded-lg shadow-lg z-50 transition-opacity duration-300
+                       ${type === 'error' ? 'bg-red-600' : 'bg-gray-800'} text-white opacity-100`;
+        setTimeout(() => {
+            toast.classList.remove('opacity-100');
+            toast.classList.add('opacity-0');
+        }, duration);
+    }
+
+    uploadBtn.addEventListener("click", async function () {
+        if (isUploading) return;
+
+        const files = document.getElementById("fileInput").files;
+        const quality = document.getElementById("quality").value;
+
+        if (!files.length) {
+            showToast("请选择要上传的文件夹！", "error");
+            return;
+        }
+
+        isUploading = true;
+        uploadBtn.disabled = true;
+        uploadBtn.classList.add("opacity-50", "cursor-not-allowed");
+
+        const uploadInfo = document.getElementById("uploadInfo");
+        const fileCount = document.getElementById("fileCount");
+        const progressBar = document.getElementById("progressBar");
+        const progressText = document.getElementById("progressText");
+
+        uploadInfo.classList.remove("hidden");
+        fileCount.textContent = `上传 ${files.length} 个文件，总质量: ${quality}`;
+        progressBar.style.width = "0%";
+        progressText.textContent = `准备上传...`;
+
+        // 禁用下载按钮
+        downloadBtn.classList.add("bg-green-400", "cursor-not-allowed");
+        downloadBtn.classList.remove("bg-green-600", "gradient-breath");
+        downloadBtn.style.pointerEvents = "none";
+
+        const formData = new FormData();
+        for (let file of files) {
+            formData.append("files", file, file.webkitRelativePath);
+        }
+        formData.append("quality", quality);
+
+        try {
+            const response = await fetch("/api/image/upload", { method: "POST", body: formData });
+
+            let percent = 0;
+            progressText.textContent = `处理中...`;
+            const interval = setInterval(() => {
+                percent += Math.random() * 10;
+                if (percent >= 90) percent = 90;
+                progressBar.style.width = percent + "%";
+            }, 200);
+
+            await response.text();
+            clearInterval(interval);
+
+            progressBar.style.width = "100%";
+            progressText.textContent = "上传并压缩完成";
+            showToast("上传并压缩完成！");
+
+            // 下载按钮激活并加呼吸渐变
+            downloadBtn.classList.remove("bg-green-400", "cursor-not-allowed");
+            downloadBtn.classList.add("bg-green-600", "gradient-breath", "cursor-pointer");
+            downloadBtn.style.pointerEvents = "auto";
+
+        } catch (err) {
+            progressBar.style.width = "0%";
+            progressText.textContent = "上传失败，请重试";
+            showToast("上传失败，请重试！", "error");
+        } finally {
+            isUploading = false;
+            uploadBtn.disabled = false;
+            uploadBtn.classList.remove("opacity-50", "cursor-not-allowed");
+        }
+    });
+</script>
+
+</body>
+</html>

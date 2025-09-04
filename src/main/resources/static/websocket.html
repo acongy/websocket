@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"/>
+    <title>WebSocket 聊天</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-ui/lib/theme-chalk/index.css"/>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2/dist/vue.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/element-ui/lib/index.js"></script>
+    <style>
+        #app {
+            padding: 20px;
+            max-width: 700px;
+            margin: auto;
+            font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+        }
+
+        .log-box {
+            background: #fefefe;
+            height: 320px;
+            overflow-y: auto;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            margin-top: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .message {
+            max-width: 70%;
+            padding: 10px 14px;
+            border-radius: 18px;
+            line-height: 1.4;
+            word-wrap: break-word;
+            position: relative;
+            font-size: 14px;
+            box-shadow: 0 1px 3px rgb(0 0 0 / 0.1);
+        }
+
+        .message.self {
+            align-self: flex-end;
+            background-color: #dcf8c6;
+            color: #222;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.other {
+            align-self: flex-start;
+            background-color: #fff;
+            border: 1px solid #ddd;
+            border-bottom-left-radius: 4px;
+            color: #333;
+        }
+
+        .message.system {
+            align-self: center;
+            background-color: #f0f0f0;
+            color: #666;
+            border-radius: 12px;
+        }
+
+        .meta {
+            font-size: 11px;
+            color: #999;
+            margin-bottom: 4px;
+        }
+
+        .meta.self {
+            text-align: right;
+        }
+
+        .user-list {
+            border: 1px solid #ddd;
+            padding: 8px;
+            max-height: 160px;
+            overflow-y: auto;
+            margin-top: 10px;
+            background-color: #fafafa;
+            border-radius: 6px;
+        }
+
+        .user-item {
+            cursor: pointer;
+            padding: 6px 10px;
+            border-radius: 6px;
+            margin-bottom: 6px;
+            font-weight: 500;
+            transition: background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            user-select: none;
+            position: relative;
+            display: inline-block;
+        }
+
+        .user-item:hover {
+            background-color: #e6f0ff;
+        }
+
+        .user-item.selected {
+            background: linear-gradient(145deg, #409eff, #66b1ff);
+            color: white;
+            font-weight: 600;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .notify-dot {
+            position: absolute;
+            top: -2px;
+            right: -10px;
+            width: 10px;
+            height: 10px;
+            background: linear-gradient(145deg, #409eff, #66b1ff);
+            border-radius: 50%;
+            animation: breathing 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .group-notify-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            background: linear-gradient(145deg, #409eff, #66b1ff);
+            border-radius: 50%;
+            animation: breathing 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+            margin-left: 5px;
+            vertical-align: middle;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        @keyframes breathing {
+            0% {
+                opacity: 0.5;
+                transform: scale(0.8);
+                box-shadow: 0 0 8px 2px rgba(64, 158, 255, 0.4), 0 0 12px 4px rgba(64, 158, 255, 0.2);
+            }
+            50% {
+                opacity: 1;
+                transform: scale(1.1);
+                box-shadow: 0 0 12px 4px rgba(64, 158, 255, 0.8), 0 0 16px 6px rgba(64, 158, 255, 0.3);
+            }
+            100% {
+                opacity: 0.5;
+                transform: scale(0.8);
+                box-shadow: 0 0 8px 2px rgba(64, 158, 255, 0.4), 0 0 12px 4px rgba(64, 158, 255, 0.2);
+            }
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .notify-dot,
+            .group-notify-dot {
+                background: linear-gradient(145deg, #66b1ff, #99ccff);
+                box-shadow: 0 0 8px 2px rgba(102, 177, 255, 0.5), 0 0 12px 4px rgba(102, 177, 255, 0.3);
+            }
+        }
+
+        .connection-status {
+            font-size: 12px;
+            margin-left: 10px;
+            color: #666;
+        }
+
+        .connection-status.connected {
+            color: #67c23a;
+        }
+
+        .connection-status.disconnected {
+            color: #f56c6c;
+        }
+    </style>
+</head>
+<body>
+<div id="app">
+    <el-dialog
+            title="请输入你的用户名"
+            :visible.sync="showLogin"
+            :close-on-click-modal="false"
+            :close-on-press-escape="false"
+            :before-close="handleCloseLogin"
+            center
+    >
+        <el-input v-model="username" placeholder="如：小明" maxlength="20"></el-input>
+        <span slot="footer">
+            <el-button type="primary" @click="confirmUsername">进入聊天</el-button>
+        </span>
+    </el-dialog>
+
+    <el-card v-if="!showLogin">
+        <h2>WebSocket 聊天</h2>
+        <el-alert
+                :title="isConnected ? '已连接' : '未连接'"
+                :type="isConnected ? 'success' : 'error'"
+                show-icon
+        >
+            <strong>{{ username }}</strong>
+            <span class="connection-status" :class="isConnected ? 'connected' : 'disconnected'">
+                {{ isConnected ? '● 在线' : '● 离线' }}
+            </span>
+        </el-alert>
+
+        <el-divider></el-divider>
+
+        <el-radio-group v-model="type" size="small" @change="switchChatType">
+            <el-radio-button label="group">
+                群聊
+                <span v-if="notifyGroup" class="group-notify-dot"></span>
+            </el-radio-button>
+            <el-radio-button label="private">私聊</el-radio-button>
+        </el-radio-group>
+
+        <div v-if="type === 'private'" class="user-list">
+            <div
+                    v-for="user in userList"
+                    :key="user.userId"
+                    @click="selectUser(user)"
+                    :class="['user-item', selectedUser && selectedUser.userId === user.userId ? 'selected' : '']"
+            >
+                {{ user.username }}
+                <span v-if="notifyUsers.includes(user.userId)" class="notify-dot"></span>
+            </div>
+        </div>
+
+        <el-form :inline="true" size="small" style="margin-top: 10px;" @submit.native.prevent>
+            <el-form-item label="内容">
+                <el-input
+                        v-model="message"
+                        placeholder="输入内容"
+                        style="width: 300px;"
+                        @keyup.enter.native="sendMessage"
+                ></el-input>
+            </el-form-item>
+            <el-form-item>
+                <el-button
+                        type="success"
+                        @click="sendMessage"
+                        :disabled="!isConnected || (type === 'private' && !selectedUser)"
+                >
+                    发送
+                </el-button>
+            </el-form-item>
+        </el-form>
+
+        <el-divider></el-divider>
+
+        <h4>消息记录：{{ type === 'group' ? '群聊' : selectedUser ? `与 ${selectedUser.username} 的私聊` : '私聊' }}</h4>
+        <div class="log-box" ref="logBox">
+            <div
+                    v-for="(msg, index) in currentLogs"
+                    :key="index"
+                    :class="['message', msg.fromUserId === userId ? 'self' : msg.fromUserId === 'system' ? 'system' : 'other']"
+            >
+                <div :class="['meta', msg.fromUserId === userId ? 'self' : '']" v-if="msg.fromUserId !== 'system'">
+                    {{ msg.fromUserId === userId ? '我' : msg.fromUsername }}
+                    <span style="margin-left: 6px; font-size: 10px; color: #bbb;">
+                        {{ formatTime(msg.timestamp) }}
+                    </span>
+                </div>
+                <div class="content">{{ msg.content }}</div>
+            </div>
+        </div>
+    </el-card>
+</div>
+
+<script>
+    new Vue({
+        el: '#app',
+        data() {
+            return {
+                username: '',
+                userId: '',
+                type: 'group',
+                message: '',
+                showLogin: true,
+                ws: null,
+                isConnected: false,
+                userList: [],
+                selectedUser: null,
+                groupLogs: [],
+                privateLogs: {},
+                notifyUsers: [],
+                notifyGroup: false,
+            };
+        },
+        computed: {
+            currentLogs() {
+                if (this.type === 'group') {
+                    return this.groupLogs;
+                } else if (this.selectedUser) {
+                    return this.privateLogs[this.selectedUser.userId] || [];
+                }
+                return [];
+            },
+        },
+        methods: {
+            confirmUsername() {
+                if (!this.username.trim()) {
+                    this.$message.warning('请输入用户名');
+                    return;
+                }
+                this.userId = 'user_' + Math.floor(Math.random() * 10000);
+                this.showLogin = false;
+                this.connect();
+                this.appendLog('group', {
+                    fromUserId: 'system',
+                    fromUsername: '系统',
+                    content: `欢迎 ${this.username} 加入聊天！`,
+                });
+            },
+            handleCloseLogin(done) {
+                this.$message.warning('请输入用户名才能进入');
+            },
+            connect() {
+                const url = 'ws://localhost:18083/chat?userId=' + this.userId + '&username=' + encodeURIComponent(this.username);
+                this.ws = new WebSocket(url);
+
+                this.ws.onopen = () => {
+                    this.isConnected = true;
+                    this.appendLog('group', {
+                        fromUserId: 'system',
+                        fromUsername: '系统',
+                        content: `✅ 连接成功（${this.username}）`,
+                    });
+                };
+
+                this.ws.onmessage = (event) => {
+                    let data = {};
+                    try {
+                        data = JSON.parse(event.data);
+                    } catch (e) {
+                        this.appendLog('group', {
+                            fromUserId: 'system',
+                            fromUsername: '系统',
+                            content: ` ${event.data}`,
+                        });
+                        return;
+                    }
+
+                    if (data.type === 'userList') {
+                        const oldUserIds = new Set(this.userList.map(u => u.userId));
+                        const newUserIds = new Set(data.list.map(u => u.userId));
+                        data.list.forEach(user => {
+                            if (!oldUserIds.has(user.userId) && user.userId !== this.userId) {
+                                this.appendLog('group', {
+                                    fromUserId: 'system',
+                                    fromUsername: '系统',
+                                    content: `${user.username} 加入了聊天`,
+                                });
+                            }
+                        });
+                        this.userList.forEach(user => {
+                            if (!newUserIds.has(user.userId)) {
+                                this.appendLog('group', {
+                                    fromUserId: 'system',
+                                    fromUsername: '系统',
+                                    content: `${user.username} 离开了聊天`,
+                                });
+                            }
+                        });
+                        this.userList = data.list.filter(u => u.userId !== this.userId);
+                        if (this.selectedUser && !newUserIds.has(this.selectedUser.userId)) {
+                            this.selectedUser = null;
+                            this.notifyUsers = this.notifyUsers.filter(id => newUserIds.has(id));
+                        }
+                        this.$set(this, 'userList', [...this.userList]);
+                    } else if (data.type === 'message') {
+                        if (data.fromUserId === this.userId) {
+                            return;
+                        }
+                        const chatType = data.toUserId ? 'private' : 'group';
+                        const logKey = chatType === 'private' ? (data.fromUserId === this.userId ? data.toUserId : data.fromUserId) : 'group';
+                        if (chatType === 'private' && !this.privateLogs[logKey]) {
+                            this.$set(this.privateLogs, logKey, []);
+                        }
+                        this.appendLog(chatType, data, logKey);
+                        if (chatType === 'private' && (!this.selectedUser || this.selectedUser.userId !== data.fromUserId)) {
+                            if (!this.notifyUsers.includes(data.fromUserId)) {
+                                this.$set(this, 'notifyUsers', [...this.notifyUsers, data.fromUserId]);
+                            }
+                        } else if (chatType === 'group' && this.type !== 'group') {
+                            this.notifyGroup = true;
+                        }
+                    }
+                };
+
+                this.ws.onclose = () => {
+                    this.isConnected = false;
+                    this.appendLog('group', {
+                        fromUserId: 'system',
+                        fromUsername: '系统',
+                        content: '❌ 连接已关闭',
+                    });
+                };
+
+                this.ws.onerror = () => {
+                    this.$message.error('WebSocket 连接出错');
+                };
+            },
+            selectUser(user) {
+                this.selectedUser = user;
+                if (!this.privateLogs[user.userId]) {
+                    this.$set(this.privateLogs, user.userId, []);
+                }
+                this.notifyUsers = this.notifyUsers.filter(id => id !== user.userId);
+                this.$set(this, 'notifyUsers', [...this.notifyUsers]);
+                this.$nextTick(() => {
+                    const el = this.$refs.logBox;
+                    el.scrollTop = el.scrollHeight;
+                });
+            },
+            switchChatType(type) {
+                if (type === 'group') {
+                    this.notifyGroup = false;
+                }
+                this.$nextTick(() => {
+                    const el = this.$refs.logBox;
+                    el.scrollTop = el.scrollHeight;
+                });
+            },
+            sendMessage() {
+                if (!this.message.trim()) {
+                    this.$message.warning('请输入消息内容');
+                    return;
+                }
+                if (this.type === 'private' && !this.selectedUser) {
+                    this.$message.warning('请选择私聊对象');
+                    return;
+                }
+                const payload = {
+                    type: this.type,
+                    fromUserId: this.userId,
+                    fromUsername: this.username,
+                    content: this.message.trim(),
+                    timestamp: Date.now(),
+                };
+                if (this.type === 'private') {
+                    payload.toUserId = this.selectedUser.userId;
+                    if (!this.privateLogs[this.selectedUser.userId]) {
+                        this.$set(this.privateLogs, this.selectedUser.userId, []);
+                    }
+                }
+                this.ws.send(JSON.stringify(payload));
+                const logKey = this.type === 'private' ? this.selectedUser.userId : 'group';
+                this.appendLog(this.type, payload, logKey);
+                this.message = '';
+            },
+            appendLog(chatType, msg, logKey) {
+                if (!msg.timestamp) {
+                    msg.timestamp = Date.now();
+                }
+                if (chatType === 'group') {
+                    this.groupLogs.push(msg);
+                    this.$set(this, 'groupLogs', [...this.groupLogs]);
+                } else {
+                    if (!this.privateLogs[logKey]) {
+                        this.$set(this.privateLogs, logKey, []);
+                    }
+                    this.privateLogs[logKey].push(msg);
+                    this.$set(this.privateLogs, logKey, [...this.privateLogs[logKey]]);
+                }
+                this.$nextTick(() => {
+                    const el = this.$refs.logBox;
+                    el.scrollTop = el.scrollHeight;
+                });
+            },
+            formatTime(timestamp) {
+                if (!timestamp) return '';
+                const date = new Date(timestamp);
+                const h = date.getHours().toString().padStart(2, '0');
+                const m = date.getMinutes().toString().padStart(2, '0');
+                return `${h}:${m}`;
+            },
+        },
+    });
+</script>
+</body>
+</html>
