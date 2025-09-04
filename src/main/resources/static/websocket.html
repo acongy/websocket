@@ -309,7 +309,7 @@
                 this.$message.warning('请输入用户名才能进入');
             },
             connect() {
-                const url = 'ws://acong.zeabur.app/chat?userId=' + this.userId + '&username=' + encodeURIComponent(this.username);
+                const url = 'wss://acong.zeabur.app/chat?userId=' + this.userId + '&username=' + encodeURIComponent(this.username);
                 this.ws = new WebSocket(url);
 
                 this.ws.onopen = () => {
