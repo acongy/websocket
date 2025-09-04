@@ -25,89 +25,69 @@ import java.util.zip.ZipOutputStream;
 @RequestMapping("/api/image")
 public class ImageController {
 
-    private static final Path UPLOAD_DIR = Paths.get("uploads");
-    private static final Path COMPRESS_DIR = Paths.get("uploads_compressed");
+    private static final Path TEMP_DIR = Paths.get("tmp");
+    private static final Path COMPRESS_DIR = TEMP_DIR.resolve("compressed");
 
     @PostConstruct
     public void init() throws IOException {
-        if (Files.exists(UPLOAD_DIR)) {
-            FileSystemUtils.deleteRecursively(UPLOAD_DIR);
+        // 清空临时目录
+        if (Files.exists(TEMP_DIR)) {
+            FileSystemUtils.deleteRecursively(TEMP_DIR);
         }
-        if (Files.exists(COMPRESS_DIR)) {
-            FileSystemUtils.deleteRecursively(COMPRESS_DIR);
-        }
-        Files.createDirectories(UPLOAD_DIR);
+        Files.createDirectories(TEMP_DIR);
         Files.createDirectories(COMPRESS_DIR);
     }
 
     /**
-     * 上传
-     *
-     * @param files
-     * @param quality
-     * @return
-     * @throws IOException
+     * 上传文件到临时目录并压缩
      */
     @PostMapping("/upload")
     public String uploadFiles(@RequestParam("files") List<MultipartFile> files,
                               @RequestParam("quality") float quality) throws IOException {
-
+        System.out.println("开始上传");
         for (MultipartFile file : files) {
-            // 使用前端的 webkitRelativePath 保留目录
             String relativePath = file.getOriginalFilename().replace("/", File.separator).replace("\\", File.separator);
-            Path dest = UPLOAD_DIR.resolve(relativePath).normalize();
-
-            //  确保父目录存在
+            Path dest = TEMP_DIR.resolve(relativePath).normalize();
             Files.createDirectories(dest.getParent());
-
-            //  用 Files.copy 替代 transferTo
             try (InputStream is = file.getInputStream()) {
                 Files.copy(is, dest, StandardCopyOption.REPLACE_EXISTING);
             }
         }
 
-        // 执行压缩
-        ImageService.scanAndCompress(UPLOAD_DIR.toFile(), UPLOAD_DIR.toFile(), COMPRESS_DIR.toFile(), quality);
+        // 压缩到 COMPRESS_DIR
+        ImageService.scanAndCompress(TEMP_DIR.toFile(), TEMP_DIR.toFile(), COMPRESS_DIR.toFile(), quality);
 
         return "上传并压缩完成，质量=" + quality;
     }
 
-
     /**
-     * 下载压缩包
+     * 下载整个压缩包（只包含压缩后的文件），下载完成后删除压缩目录
      */
     @GetMapping("/download/zip")
     public void downloadZip(HttpServletResponse response) throws IOException {
         response.setContentType("application/zip");
         response.setHeader(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"compressed.zip\"");
 
+        // 只遍历压缩目录
         try (ZipOutputStream zos = new ZipOutputStream(response.getOutputStream())) {
-            Files.walk(COMPRESS_DIR).filter(Files::isRegularFile).forEach(path -> {
-                try {
-                    zos.putNextEntry(new ZipEntry(COMPRESS_DIR.relativize(path).toString()));
-                    Files.copy(path, zos);
-                    zos.closeEntry();
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
-            });
-        }
-    }
-
-    /**
-     * 下载单个文件
-     */
-    @GetMapping("/download/file")
-    public ResponseEntity<byte[]> downloadFile(@RequestParam String path) throws IOException {
-        Path filePath = COMPRESS_DIR.resolve(path).normalize();
-        if (!Files.exists(filePath)) {
-            return ResponseEntity.notFound().build();
+            if (Files.exists(COMPRESS_DIR)) {
+                Files.walk(COMPRESS_DIR)
+                        .filter(Files::isRegularFile)
+                        .forEach(path -> {
+                            try {
+                                // 相对路径保存在 ZIP 里
+                                zos.putNextEntry(new ZipEntry(COMPRESS_DIR.relativize(path).toString()));
+                                Files.copy(path, zos);
+                                zos.closeEntry();
+                            } catch (IOException e) {
+                                throw new RuntimeException(e);
+                            }
+                        });
+            }
         }
 
-        byte[] data = Files.readAllBytes(filePath);
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filePath.getFileName() + "\"")
-                .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                .body(data);
+        // 下载完成后删除压缩目录
+        FileSystemUtils.deleteRecursively(TEMP_DIR);
+        Files.createDirectories(COMPRESS_DIR);
     }
 }
