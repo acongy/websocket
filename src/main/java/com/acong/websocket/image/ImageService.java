@@ -18,40 +18,59 @@ import java.util.Iterator;
  */
 public class ImageService {
 
+    // 主压缩方法
     public static void compressImage(String inputPath, String outputPath, float quality) throws IOException {
         BufferedImage image = ImageIO.read(new File(inputPath));
         if (image == null) {
             return;
         }
 
-        if (image.getType() != BufferedImage.TYPE_INT_RGB) {
-            BufferedImage convertedImg = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_RGB);
-            Graphics2D g2d = convertedImg.createGraphics();
+        // 获取原始格式
+        String formatName = inputPath.substring(inputPath.lastIndexOf('.') + 1).toLowerCase();
+
+        // JPEG 强制转换成 RGB
+        if ((formatName.equals("jpg") || formatName.equals("jpeg")) && image.getType() != BufferedImage.TYPE_INT_RGB) {
+            BufferedImage converted = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_RGB);
+            Graphics2D g2d = converted.createGraphics();
             g2d.setColor(Color.WHITE);
             g2d.fillRect(0, 0, image.getWidth(), image.getHeight());
             g2d.drawImage(image, 0, 0, null);
             g2d.dispose();
-            image = convertedImg;
+            image = converted;
         }
 
-        Iterator<ImageWriter> writers = ImageIO.getImageWritersByFormatName("jpeg");
-        if (!writers.hasNext()) throw new IOException("No JPEG writer found");
-        ImageWriter writer = writers.next();
+        // PNG 压缩：转换成索引颜色
+        if (formatName.equals("png")) {
+            image = convertToIndexed(image);
+        }
 
         File outputFile = new File(outputPath);
         outputFile.getParentFile().mkdirs();
 
-        try (ImageOutputStream output = ImageIO.createImageOutputStream(outputFile)) {
-            writer.setOutput(output);
-            ImageWriteParam param = writer.getDefaultWriteParam();
+        Iterator<ImageWriter> writers = ImageIO.getImageWritersByFormatName(formatName);
+        if (!writers.hasNext()) {
+            // 找不到 writer，降级使用 PNG
+            ImageIO.write(image, "png", outputFile);
+            return;
+        }
+
+        ImageWriter writer = writers.next();
+        ImageWriteParam param = writer.getDefaultWriteParam();
+
+        if (param.canWriteCompressed()) {
             param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
             param.setCompressionQuality(quality);
+        }
+
+        try (ImageOutputStream ios = ImageIO.createImageOutputStream(outputFile)) {
+            writer.setOutput(ios);
             writer.write(null, new IIOImage(image, null, null), param);
         } finally {
             writer.dispose();
         }
     }
 
+    // 扫描目录并压缩
     public static void scanAndCompress(File rootDir, File current, File targetDir, float quality) throws IOException {
         File[] files = current.listFiles();
         if (files == null) {
@@ -67,5 +86,14 @@ public class ImageService {
                 compressImage(file.getAbsolutePath(), outputFile.getAbsolutePath(), quality);
             }
         }
+    }
+
+    // PNG 压缩辅助：转换成索引颜色
+    private static BufferedImage convertToIndexed(BufferedImage src) {
+        BufferedImage dest = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_BYTE_INDEXED);
+        Graphics2D g2d = dest.createGraphics();
+        g2d.drawImage(src, 0, 0, null);
+        g2d.dispose();
+        return dest;
     }
 }
